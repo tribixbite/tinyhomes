@@ -1,9 +1,11 @@
 # Claude Code config — sortsafe tiny homes
 
 ## Purpose
-Static, filterable directory of **real** tiny homes, deployed to **sortsafe.com**
-via GitHub Pages (`tribixbite/sortsafe`). The torch-directory style: card grid
-with photo thumbnails + comprehensive spec filters.
+Static, filterable directory of **real** tiny homes, deployed to
+**tinyhomes.sortsafe.com** via GitHub Pages (repo `tribixbite/tinyhomes`). The
+torch-directory style: card grid with photo thumbnails + comprehensive spec
+filters. (The apex `sortsafe.com` is a different project — the deal-sniper repo
+`tribixbite/sortsafe`.)
 
 ## Data integrity (inherited, non-negotiable)
 NEVER fabricate, infer, estimate, or default data values. Missing fields stay
@@ -48,7 +50,7 @@ NEVER fabricate, infer, estimate, or default data values. Missing fields stay
 
 ## Deploy
 - Push to `main` → `.github/workflows/deploy.yml` builds on GitHub runners and
-  publishes to Pages. Custom domain via `public/CNAME` (sortsafe.com).
-- Pages was enabled with `build_type=workflow` and `cname=sortsafe.com` set via
+  publishes to Pages. Custom domain via `public/CNAME` (**tinyhomes.sortsafe.com**).
+- Pages enabled with `build_type=workflow` and `cname=tinyhomes.sortsafe.com` set via
   `gh api`. See global CLAUDE.md "GitHub Pages behind Cloudflare proxy" for the
   Cloudflare Full-SSL pre-cert root-404 gotcha.

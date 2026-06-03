@@ -1,7 +1,7 @@
 # SortSafe · Tiny Homes Directory
 
 A comprehensive, filterable directory of **real tiny homes** — live at
-**[sortsafe.com](https://sortsafe.com)**.
+**[tinyhomes.sortsafe.com](https://tinyhomes.sortsafe.com)**.
 
 Browse 1,300+ actual tiny-house listings with photo thumbnails and filter by
 price, square footage, length, width, weight, bedrooms, bathrooms, lofts, type,
