@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path";
 const API = "https://api.tinyhouselistings.com/api/v1";
 const CDN = "https://thl-images.b-cdn.net";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = resolve(ROOT, "public/data/tiny-homes.json");
+const OUT = resolve(ROOT, "data/raw/sources/thl.json");
 
 const PER_PAGE = 100;
 const CONCURRENCY = 6;
@@ -99,20 +99,29 @@ function mapRecord(base, detail) {
 
   const addr = d.address ?? {};
   const cents = (d.default_price ?? base.default_price)?.amount_cents;
+  const purchaseType = base.purchase_type ?? d.purchase_type ?? null;
+
+  // Price: monthly rent is not comparable to a purchase price, and sub-$1k
+  // "purchase" values are deposits/placeholders — both become null (not bogus).
+  let price = cents != null ? Math.round(cents / 100) : null;
+  if (purchaseType === "rent") price = null;
+  if (price != null && price < 1000) price = null;
 
   return {
     id: `thl-${base.id}`,
     title: (base.title ?? d.title ?? "Tiny Home").trim(),
     manufacturer: null,
-    price: cents != null ? Math.round(cents / 100) : null,
-    sqft: numOrNull(base.area ?? d.area),
-    bedrooms: numOrNull(base.bedrooms ?? d.bedrooms),
-    bathrooms: numOrNull(base.bathrooms ?? d.bathrooms),
+    price,
+    // Drop physically-impossible values (source unit-mix-up errors, e.g. an
+    // "857,949 ft²" tiny home). This removes bad data — it never invents any.
+    sqft: clampPlausible(numOrNull(base.area ?? d.area), 5000),
+    bedrooms: clampPlausible(numOrNull(base.bedrooms ?? d.bedrooms), 12),
+    bathrooms: clampPlausible(numOrNull(base.bathrooms ?? d.bathrooms), 12),
     sleeps: null,
-    lofts: numOrNull(d.lofts ?? base.lofts),
-    lengthFt: toFeet(numOrNull(d.length), unit),
-    widthFt: toFeet(numOrNull(d.width), unit),
-    weightLbs: unit === "feet" ? numOrNull(d.weight) : null,
+    lofts: clampPlausible(numOrNull(d.lofts ?? base.lofts), 8),
+    lengthFt: clampPlausible(toFeet(numOrNull(d.length), unit), 120),
+    widthFt: clampPlausible(toFeet(numOrNull(d.width), unit), 40),
+    weightLbs: clampPlausible(unit === "feet" ? numOrNull(d.weight) : null, 120000),
     type: TYPE_MAP[propertyType] ?? "Other",
     year: null,
     city: addr.city ?? base.city ?? null,
@@ -122,7 +131,7 @@ function mapRecord(base, detail) {
     images: images.slice(0, 12),
     sourceUrl: `https://tinyhouselistings.com/listing/${base.slug}`,
     source: "Tiny House Listings",
-    purchaseType: base.purchase_type ?? d.purchase_type ?? null,
+    purchaseType,
     listedAt: base.created_at ?? d.listed_at ?? null,
   };
 }
@@ -139,6 +148,12 @@ function trimDesc(d) {
 function numOrNull(v) {
   const n = typeof v === "string" ? parseFloat(v) : v;
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Returns the value only if it's a positive number within a plausible ceiling;
+ *  otherwise null. Used to drop source unit-mix-up errors, not to invent data. */
+function clampPlausible(v, max) {
+  return v != null && v > 0 && v <= max ? v : null;
 }
 
 function normState(s) {

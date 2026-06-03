@@ -33,33 +33,52 @@ interface FilterState {
 type SortKey =
   | "price-asc"
   | "price-desc"
+  | "ppsf-asc"
   | "sqft-asc"
   | "sqft-desc"
-  | "year-desc"
   | "newest";
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: "newest", label: "Recently listed" },
   { key: "price-asc", label: "Price: low → high" },
   { key: "price-desc", label: "Price: high → low" },
+  { key: "ppsf-asc", label: "$/ft²: low → high" },
   { key: "sqft-asc", label: "Size: small → large" },
   { key: "sqft-desc", label: "Size: large → small" },
 ];
 
-/** Bounds computed from the dataset, used to seed the range sliders. */
+/** Price per square foot, when both are known. */
+function pricePerSqft(h: TinyHome): number | null {
+  return h.price != null && h.sqft ? h.price / h.sqft : null;
+}
+
+/** Slider bound: percentile-capped so a handful of large outliers don't blow
+ *  out the usable scale. `capped` means real values exist above `max`, so the
+ *  top thumb behaves as "and up" (no upper limit). */
+interface RangeBound {
+  min: number;
+  max: number;
+  step: number;
+  capped: boolean;
+}
 interface Bounds {
-  price: RangeFilter;
-  sqft: RangeFilter;
-  length: RangeFilter;
-  width: RangeFilter;
-  weight: RangeFilter;
-  year: RangeFilter;
+  price: RangeBound;
+  sqft: RangeBound;
+  length: RangeBound;
+  width: RangeBound;
+  weight: RangeBound;
+  year: RangeBound;
 }
 
 let HOMES: TinyHome[] = [];
 let BOUNDS: Bounds;
 let MANUFACTURERS: string[] = [];
 let STATES: string[] = [];
+
+/** Incremental render so we never mount all ~1,400 cards at once. */
+let FILTERED: TinyHome[] = [];
+let rendered = 0;
+const CHUNK = 60;
 
 const state: FilterState = {
   search: "",
@@ -97,6 +116,14 @@ async function boot() {
   buildSortControl();
   buildFilters();
   wireGlobalControls();
+
+  // Load more cards as the sentinel nears the viewport.
+  const io = new IntersectionObserver(
+    (entries) => entries.some((e) => e.isIntersecting) && appendChunk(),
+    { rootMargin: "800px" },
+  );
+  io.observe(el("sentinel"));
+
   render();
 }
 
@@ -104,20 +131,44 @@ async function boot() {
 /* Derivation helpers                                                  */
 /* ------------------------------------------------------------------ */
 
+/** Per-field: cap the slider max at this percentile, round bounds to a tidy
+ *  number, and use this thumb step. */
+const RANGE_CFG: Record<RangeField, { pct: number; round: number; step: number }> = {
+  price: { pct: 0.98, round: 25000, step: 1000 },
+  sqft: { pct: 0.98, round: 50, step: 5 },
+  length: { pct: 0.98, round: 5, step: 1 },
+  width: { pct: 0.98, round: 5, step: 1 },
+  weight: { pct: 0.97, round: 2500, step: 250 },
+  year: { pct: 1, round: 1, step: 1 },
+};
+
 function computeBounds(homes: TinyHome[]): Bounds {
-  const span = (vals: number[], padLo = 0, padHi = 0): RangeFilter => {
-    const nums = vals.filter((v) => Number.isFinite(v));
-    if (!nums.length) return { min: 0, max: 0 };
-    return { min: Math.floor(Math.min(...nums)) - padLo, max: Math.ceil(Math.max(...nums)) + padHi };
+  const sel: Record<RangeField, (h: TinyHome) => number | null> = {
+    price: (h) => h.price,
+    sqft: (h) => h.sqft,
+    length: (h) => h.lengthFt,
+    width: (h) => h.widthFt,
+    weight: (h) => h.weightLbs,
+    year: (h) => h.year,
   };
-  return {
-    price: span(homes.map((h) => h.price ?? NaN)),
-    sqft: span(homes.map((h) => h.sqft ?? NaN)),
-    length: span(homes.map((h) => h.lengthFt ?? NaN)),
-    width: span(homes.map((h) => h.widthFt ?? NaN)),
-    weight: span(homes.map((h) => h.weightLbs ?? NaN)),
-    year: span(homes.map((h) => h.year ?? NaN)),
-  };
+  const out = {} as Bounds;
+  for (const field of Object.keys(RANGE_CFG) as RangeField[]) {
+    const cfg = RANGE_CFG[field];
+    const vals = homes
+      .map(sel[field])
+      .filter((v): v is number => v != null && Number.isFinite(v))
+      .sort((a, b) => a - b);
+    if (!vals.length) {
+      out[field] = { min: 0, max: 0, step: 1, capped: false };
+      continue;
+    }
+    const at = (p: number) => vals[Math.floor(p * (vals.length - 1))];
+    const realMax = vals[vals.length - 1];
+    const min = Math.floor(at(0) / cfg.round) * cfg.round;
+    const max = Math.max(min + cfg.round, Math.ceil(at(cfg.pct) / cfg.round) * cfg.round);
+    out[field] = { min, max, step: cfg.step, capped: realMax > max };
+  }
+  return out;
 }
 
 function uniqueSorted(vals: (string | null)[]): string[] {
@@ -180,9 +231,9 @@ function sortHomes(homes: TinyHome[]): TinyHome[] {
   const cmp: Record<SortKey, (a: TinyHome, b: TinyHome) => number> = {
     "price-asc": by((h) => h.price, 1),
     "price-desc": by((h) => h.price, -1),
+    "ppsf-asc": by(pricePerSqft, 1),
     "sqft-asc": by((h) => h.sqft, 1),
     "sqft-desc": by((h) => h.sqft, -1),
-    "year-desc": by((h) => h.year, -1),
     newest: (a, b) => (b.listedAt ?? "").localeCompare(a.listedAt ?? ""),
   };
   return [...homes].sort(cmp[state.sort]);
@@ -193,21 +244,27 @@ function sortHomes(homes: TinyHome[]): TinyHome[] {
 /* ------------------------------------------------------------------ */
 
 function render() {
-  const filtered = sortHomes(HOMES.filter(matches));
+  FILTERED = sortHomes(HOMES.filter(matches));
+  const n = FILTERED.length;
   const grid = el("grid");
-  const empty = el("empty");
 
-  el("result-count").textContent = `${filtered.length.toLocaleString()} of ${HOMES.length.toLocaleString()} tiny homes`;
+  el("result-count").textContent = `${n.toLocaleString()} of ${HOMES.length.toLocaleString()} tiny homes`;
   el("footer-stats").textContent = `${HOMES.length.toLocaleString()} homes · ${MANUFACTURERS.length} builders · ${STATES.length} regions`;
+  el("apply").textContent = n ? `Show ${n.toLocaleString()} ${n === 1 ? "home" : "homes"}` : "No matches";
 
-  if (!filtered.length) {
-    grid.innerHTML = "";
-    empty.hidden = false;
-  } else {
-    empty.hidden = true;
-    grid.innerHTML = filtered.map(card).join("");
-  }
+  grid.innerHTML = "";
+  rendered = 0;
+  el("empty").hidden = n > 0;
+  if (n) appendChunk();
   syncUrl();
+}
+
+/** Append the next page of cards; called on render and on scroll-near-bottom. */
+function appendChunk() {
+  const slice = FILTERED.slice(rendered, rendered + CHUNK);
+  if (!slice.length) return;
+  el("grid").insertAdjacentHTML("beforeend", slice.map(card).join(""));
+  rendered += slice.length;
 }
 
 function card(h: TinyHome): string {
@@ -222,6 +279,7 @@ function card(h: TinyHome): string {
   if (h.weightLbs != null) specs.push(spec(`${(h.weightLbs / 1000).toFixed(1)}k`, "lb"));
 
   const loc = [h.city, h.state].filter(Boolean).join(", ");
+  const ppsf = pricePerSqft(h);
   return `
   <a class="ti-card" href="${esc(h.sourceUrl)}" target="_blank" rel="noopener noreferrer">
     <div class="ti-thumb${h.imageUrl ? "" : " noimg"}">
@@ -234,6 +292,7 @@ function card(h: TinyHome): string {
       <div class="ti-meta">
         ${h.manufacturer ? `<span class="ti-builder">${esc(h.manufacturer)}</span>` : ""}
         ${loc ? `<span class="ti-loc">${esc(loc)}</span>` : ""}
+        ${ppsf != null ? `<span class="ti-ppsf">$${Math.round(ppsf).toLocaleString()}/ft²</span>` : ""}
       </div>
       ${specs.length ? `<ul class="ti-specs">${specs.join("")}</ul>` : ""}
     </div>
@@ -269,7 +328,7 @@ function hasAny(sel: (h: TinyHome) => number | null): boolean {
 }
 
 function buildFilters() {
-  const root = el("filters");
+  const root = el("filter-groups");
   root.innerHTML = "";
 
   if (hasSpan((h) => h.price, BOUNDS.price))
@@ -293,11 +352,16 @@ function buildFilters() {
   if (hasAny((h) => h.sleeps)) root.appendChild(minChips("Sleeps", "sleeps", [2, 4, 6]));
 
   const presentTypes = TINY_HOME_TYPES.filter((t) => HOMES.some((h) => h.type === t));
-  if (presentTypes.length > 1) root.appendChild(multiChips("Type", "types", presentTypes));
+  if (presentTypes.length > 1)
+    root.appendChild(
+      multiChips("Type", "types", presentTypes, (o) => o, (t) => countBy("type", t)),
+    );
 
   const purchaseOpts = uniqueStrings(HOMES.map((h) => h.purchaseType));
   if (purchaseOpts.length > 1)
-    root.appendChild(multiChips("Offer", "purchaseTypes", purchaseOpts, prettyPurchase));
+    root.appendChild(
+      multiChips("Offer", "purchaseTypes", purchaseOpts, prettyPurchase, (o) => countBy("purchaseType", o)),
+    );
 
   if (MANUFACTURERS.length) root.appendChild(multiList("Builder", "manufacturers", MANUFACTURERS));
   if (STATES.length) root.appendChild(multiList("Location", "states", STATES));
@@ -320,7 +384,7 @@ type RangeField = "price" | "sqft" | "length" | "width" | "weight" | "year";
 function rangeGroup(
   label: string,
   field: RangeField,
-  bounds: RangeFilter,
+  bounds: RangeBound,
   fmt: (v: number) => string,
 ): HTMLElement {
   const group = section(label);
@@ -328,38 +392,49 @@ function rangeGroup(
     group.appendChild(node("p", "filter-note", "—"));
     return group;
   }
-  const cur = state[field] ?? { ...bounds };
-  const wrap = node("div", "dualrange");
+  // Seed thumbs from current state; an Infinity upper means "at the cap".
+  const cur = state[field];
+  const startLo = cur ? Math.max(bounds.min, cur.min) : bounds.min;
+  const startHi = cur && Number.isFinite(cur.max) ? Math.min(bounds.max, cur.max) : bounds.max;
 
+  const wrap = node("div", "dualrange");
   const track = node("div", "dr-track");
   const fill = node("div", "dr-fill");
   track.appendChild(fill);
 
-  const lo = sliderInput(bounds, cur.min);
-  const hi = sliderInput(bounds, cur.max);
+  const lo = sliderInput(bounds, startLo, `${label} minimum`);
+  const hi = sliderInput(bounds, startHi, `${label} maximum`);
 
   const out = node("div", "dr-out");
-  const outLo = node("span", "", fmt(cur.min));
-  const outHi = node("span", "", fmt(cur.max));
+  const outLo = node("span", "");
+  const outHi = node("span", "");
   out.append(outLo, node("span", "dr-dash", "–"), outHi);
 
+  const labelHi = (b: number) => fmt(b) + (b >= bounds.max && bounds.capped ? "+" : "");
   const paint = () => {
+    // Prevent the thumbs from crossing.
     let a = Number(lo.value);
     let b = Number(hi.value);
-    if (a > b) [a, b] = [b, a];
-    const range = bounds.max - bounds.min || 1;
-    const lp = ((a - bounds.min) / range) * 100;
-    const hp = ((b - bounds.min) / range) * 100;
-    fill.style.left = `${lp}%`;
-    fill.style.right = `${100 - hp}%`;
+    if (a > b) {
+      if (document.activeElement === lo) hi.value = String((b = a));
+      else lo.value = String((a = b));
+    }
+    const span = bounds.max - bounds.min || 1;
+    fill.style.left = `${((a - bounds.min) / span) * 100}%`;
+    fill.style.right = `${100 - ((b - bounds.min) / span) * 100}%`;
     outLo.textContent = fmt(a);
-    outHi.textContent = fmt(b);
+    outHi.textContent = labelHi(b);
+    lo.setAttribute("aria-valuetext", fmt(a));
+    hi.setAttribute("aria-valuetext", labelHi(b));
+    // Raise whichever thumb sits at the far right so it stays grabbable.
+    lo.style.zIndex = a > bounds.max - (bounds.max - bounds.min) * 0.04 ? "4" : "3";
   };
   const commit = () => {
-    let a = Number(lo.value);
-    let b = Number(hi.value);
-    if (a > b) [a, b] = [b, a];
-    state[field] = a <= bounds.min && b >= bounds.max ? null : { min: a, max: b };
+    const a = Number(lo.value);
+    const b = Number(hi.value);
+    const atMin = a <= bounds.min;
+    const atMax = b >= bounds.max;
+    state[field] = atMin && atMax ? null : { min: a, max: atMax && bounds.capped ? Infinity : b };
     render();
   };
   lo.addEventListener("input", paint);
@@ -373,13 +448,14 @@ function rangeGroup(
   return group;
 }
 
-function sliderInput(bounds: RangeFilter, value: number): HTMLInputElement {
+function sliderInput(bounds: RangeBound, value: number, ariaLabel: string): HTMLInputElement {
   const i = document.createElement("input");
   i.type = "range";
   i.min = String(bounds.min);
   i.max = String(bounds.max);
-  i.step = String(Math.max(1, Math.round((bounds.max - bounds.min) / 200)));
+  i.step = String(bounds.step);
   i.value = String(value);
+  i.setAttribute("aria-label", ariaLabel);
   return i;
 }
 
@@ -391,11 +467,16 @@ function minChips(label: string, field: MinField, options: number[]): HTMLElemen
   const make = (val: number, text: string) => {
     const b = node("button", "chip", text) as HTMLButtonElement;
     b.type = "button";
-    if (state[field] === val) b.classList.add("on");
+    const on = state[field] === val;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
     b.addEventListener("click", () => {
       state[field] = state[field] === val ? 0 : val;
-      row.querySelectorAll(".chip").forEach((c) => c.classList.remove("on"));
-      if (state[field] === val) b.classList.add("on");
+      row.querySelectorAll<HTMLButtonElement>(".chip").forEach((c) => {
+        const sel = c === b && state[field] === val;
+        c.classList.toggle("on", sel);
+        c.setAttribute("aria-pressed", String(sel));
+      });
       render();
     });
     return b;
@@ -413,6 +494,7 @@ function multiChips(
   field: SetField,
   options: readonly string[],
   labelFn: (o: string) => string = (o) => o,
+  countFn?: (o: string) => number,
 ): HTMLElement {
   const group = section(label);
   if (!options.length) {
@@ -421,18 +503,29 @@ function multiChips(
   }
   const row = node("div", "chips");
   options.forEach((opt) => {
-    const b = node("button", "chip", labelFn(opt)) as HTMLButtonElement;
+    const b = node("button", "chip") as HTMLButtonElement;
     b.type = "button";
-    if (state[field].has(opt)) b.classList.add("on");
+    b.append(node("span", "", labelFn(opt)));
+    if (countFn) b.append(node("span", "chip-count", String(countFn(opt))));
+    const on = state[field].has(opt);
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
     b.addEventListener("click", () => {
       toggleSet(state[field], opt);
-      b.classList.toggle("on");
+      const active = state[field].has(opt);
+      b.classList.toggle("on", active);
+      b.setAttribute("aria-pressed", String(active));
       render();
     });
     row.appendChild(b);
   });
   group.appendChild(row);
   return group;
+}
+
+/** Total homes carrying a given categorical value (for facet count badges). */
+function countBy(key: "type" | "purchaseType", value: string): number {
+  return HOMES.reduce((n, h) => n + (h[key] === value ? 1 : 0), 0);
 }
 
 function multiList(label: string, field: SetField, options: string[]): HTMLElement {
@@ -542,9 +635,17 @@ function wireGlobalControls() {
   });
 
   const toggle = el("filter-toggle");
-  toggle.addEventListener("click", () => {
-    const open = document.body.classList.toggle("filters-open");
+  const setDrawer = (open: boolean) => {
+    document.body.classList.toggle("filters-open", open);
     toggle.setAttribute("aria-expanded", String(open));
+    el("scrim").hidden = !open;
+  };
+  toggle.addEventListener("click", () => setDrawer(!document.body.classList.contains("filters-open")));
+  el("scrim").addEventListener("click", () => setDrawer(false));
+  el("apply").addEventListener("click", () => setDrawer(false));
+  el("close-filters").addEventListener("click", () => setDrawer(false));
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("filters-open")) setDrawer(false);
   });
 
   el("reset").addEventListener("click", resetAll);
@@ -572,12 +673,13 @@ function syncUrl() {
   if (state.baths) p.set("baths", String(state.baths));
   if (state.sleeps) p.set("sleeps", String(state.sleeps));
   if (state.lofts) p.set("lofts", String(state.lofts));
-  if (state.price) p.set("price", `${state.price.min}-${state.price.max}`);
-  if (state.sqft) p.set("sqft", `${state.sqft.min}-${state.sqft.max}`);
-  if (state.length) p.set("len", `${state.length.min}-${state.length.max}`);
-  if (state.width) p.set("wid", `${state.width.min}-${state.width.max}`);
-  if (state.weight) p.set("wt", `${state.weight.min}-${state.weight.max}`);
-  if (state.year) p.set("year", `${state.year.min}-${state.year.max}`);
+  const rng = (r: RangeFilter) => `${r.min}-${Number.isFinite(r.max) ? r.max : "max"}`;
+  if (state.price) p.set("price", rng(state.price));
+  if (state.sqft) p.set("sqft", rng(state.sqft));
+  if (state.length) p.set("len", rng(state.length));
+  if (state.width) p.set("wid", rng(state.width));
+  if (state.weight) p.set("wt", rng(state.weight));
+  if (state.year) p.set("year", rng(state.year));
   if (state.types.size) p.set("type", [...state.types].join("|"));
   if (state.purchaseTypes.size) p.set("offer", [...state.purchaseTypes].join("|"));
   if (state.manufacturers.size) p.set("builder", [...state.manufacturers].join("|"));
@@ -609,8 +711,10 @@ function readUrl() {
 
 function parseRange(raw: string | null, field: RangeField) {
   if (!raw) return;
-  const [a, b] = raw.split("-").map(Number);
-  if (Number.isFinite(a) && Number.isFinite(b)) state[field] = { min: a, max: b };
+  const [lo, hi] = raw.split("-");
+  const a = Number(lo);
+  const b = hi === "max" ? Infinity : Number(hi);
+  if (Number.isFinite(a) && (b === Infinity || Number.isFinite(b))) state[field] = { min: a, max: b };
 }
 
 boot().catch((err) => {

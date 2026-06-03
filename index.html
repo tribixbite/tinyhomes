@@ -19,6 +19,7 @@
   </head>
   <body>
     <div id="app">
+      <a href="#grid" class="skip-link">Skip to results</a>
       <header class="topbar">
         <div class="brand">
           <span class="brand-mark">◧</span>
@@ -27,30 +28,42 @@
           </div>
         </div>
         <div class="search-wrap">
-          <input id="search" type="search" placeholder="Search builder, model, location…" autocomplete="off" />
+          <input id="search" type="search" placeholder="Search builder, model, location…" autocomplete="off" aria-label="Search tiny homes" />
         </div>
         <div class="topbar-actions">
           <label class="sort-wrap">
             <select id="sort" aria-label="Sort results"></select>
           </label>
-          <button id="filter-toggle" class="btn-ghost" aria-expanded="false">Filters</button>
+          <button id="filter-toggle" class="btn-ghost" aria-expanded="false" aria-controls="filters">Filters</button>
         </div>
       </header>
 
       <div class="layout">
-        <aside id="filters" class="filters" aria-label="Filters"></aside>
+        <aside id="filters" class="filters" aria-label="Filters">
+          <div class="drawer-head">
+            <span>Filters</span>
+            <button id="close-filters" class="icon-btn" aria-label="Close filters">✕</button>
+          </div>
+          <div id="filter-groups"></div>
+          <div class="drawer-foot">
+            <button id="apply" class="apply-btn">Show homes</button>
+          </div>
+        </aside>
         <main class="results">
           <div class="results-bar">
             <span id="result-count" class="result-count">Loading…</span>
             <button id="reset" class="btn-link">Reset all</button>
           </div>
           <div id="grid" class="grid"></div>
+          <div id="sentinel" aria-hidden="true"></div>
           <div id="empty" class="empty" hidden>
             <p>No tiny homes match these filters.</p>
             <button id="reset-empty" class="btn">Clear filters</button>
           </div>
         </main>
       </div>
+
+      <div id="scrim" class="scrim" hidden></div>
 
       <footer class="sitefoot">
         <span id="footer-stats"></span>
