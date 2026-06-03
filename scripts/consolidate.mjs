@@ -31,7 +31,18 @@ const TYPES = new Set([
 const MAX = { sqft: 5000, bedrooms: 12, bathrooms: 12, sleeps: 30, lofts: 8, lengthFt: 120, widthFt: 40, weightLbs: 120000, price: 5_000_000 };
 
 function num(v, ceiling) {
-  const n = typeof v === "string" ? parseFloat(v.replace(/[^0-9.]/g, "")) : v;
+  let n;
+  if (typeof v === "number") {
+    n = v;
+  } else if (typeof v === "string") {
+    // A stated range ("4 - 8", "2 to 4") is ambiguous — null it, never invent
+    // a single value by concatenating the digits.
+    if (/\d\s*(?:-|–|—|to)\s*\d/i.test(v)) return null;
+    const m = v.match(/-?\d+(?:\.\d+)?/);
+    n = m ? parseFloat(m[0]) : NaN;
+  } else {
+    return null;
+  }
   if (!Number.isFinite(n) || n <= 0) return null;
   return ceiling != null && n > ceiling ? null : n;
 }
