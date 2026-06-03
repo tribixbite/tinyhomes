@@ -20,9 +20,25 @@ NEVER fabricate, infer, estimate, or default data values. Missing fields stay
   - Price: `default_price.amount_cents / 100`. `measurement_unit` is `feet`|`meters`.
   - Quirk: API intermittently returns empty bodies on rapid requests — the
     harvester retries with backoff and runs a bounded concurrency pool.
-- Re-harvest: `node scripts/harvest-thl.mjs` → writes `public/data/tiny-homes.json`.
-  `land` property_type is dropped (not a dwelling). Descriptions capped at 600 chars
-  (they only feed search; cards don't show them).
+- `land` property_type is dropped (not a dwelling). Descriptions capped at 600 chars
+  (they only feed search; cards don't show them). Physically-impossible source
+  values (unit-mix-up errors like an 857,949 ft² home) and non-comparable monthly
+  rent prices are nulled in the harvester — cleaning, not fabrication.
+
+## Multi-source pipeline
+- Every source writes an array of (partial) `TinyHome` to `data/raw/sources/<name>.json`
+  (gitignored). `scripts/harvest-thl.mjs` writes `thl.json`; builder catalogs are
+  scraped into `<builder>.json`.
+- `scripts/consolidate.mjs` merges them all → `public/data/tiny-homes.json`:
+  normalizes to the canonical schema (missing → null), re-applies plausibility
+  clamps, parses numbers (nulling ambiguous "4–8" ranges, never concatenating),
+  dedupes by `id`, requires title+sourceUrl+imageUrl. Run it after any scrape.
+- Builder sources (8, ~111 models): Dragon, Mint, Wind River, Tiny Mountain,
+  Mustard Seed, Timbercraft, Rocky Mountain, New Frontier. Most are WordPress
+  REST (`/wp-json/wp/v2/<cpt>`) for the model list + HTML for specs; some Webflow
+  (sitemap + free-text spec blobs). Builder models have `manufacturer` set (THL
+  doesn't), which populates the Builder filter; their `listedAt` is null so they
+  sort after THL in the default "recently listed" view.
 
 ## Stack / Termux notes
 - Vite + TypeScript, no framework. `npm run build` = `tsc --noEmit && vite build`.

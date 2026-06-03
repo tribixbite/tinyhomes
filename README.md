@@ -10,21 +10,34 @@ offer (sale/rent/build-to-order) and location.
 ## Data
 
 All records are aggregated from public sources — **no mock or fabricated data**.
-Missing fields stay empty rather than being inferred.
+Missing fields stay empty rather than being inferred; ambiguous values (e.g. a
+"sleeps 4–8" range) are left null, never guessed.
 
 | Source | Records | Notes |
 | --- | --- | --- |
 | [Tiny House Listings](https://tinyhouselistings.com) | ~1,372 | Public JSON API; price, size, dimensions, photos, location |
+| Mint Tiny House Company | 25 | Builder catalog + priced inventory |
+| Wind River Built | 21 | Builder catalog |
+| Dragon Tiny Homes | 15 | Builder catalog + inventory |
+| Tiny Mountain Houses | 14 | Builder catalog |
+| Mustard Seed Tiny Homes | 11 | Builder catalog |
+| Timbercraft Tiny Homes | 10 | Builder catalog |
+| Rocky Mountain Tiny Houses | 8 | Finished homes (DIY plans excluded) |
+| New Frontier Design | 7 | Builder catalog |
 
-Re-harvest with:
+**~1,483 homes across 9 sources / 8 named builders.**
+
+Pipeline:
 
 ```bash
-node scripts/harvest-thl.mjs    # writes public/data/tiny-homes.json
+node scripts/harvest-thl.mjs    # -> data/raw/sources/thl.json
+# builder sources are scraped into data/raw/sources/<builder>.json
+node scripts/consolidate.mjs    # merges all sources -> public/data/tiny-homes.json
 ```
 
-The harvester paginates the listings index, enriches each listing with its
-detail record (length/width/weight/description), normalizes `property_type` into
-display categories, and keeps only listings that have a hotlinkable thumbnail.
+`consolidate.mjs` normalizes every record to the canonical schema (missing →
+null), re-applies plausibility clamps, dedupes by id, and keeps only records
+with a title, URL, and hotlinkable thumbnail.
 
 ## Develop
 
