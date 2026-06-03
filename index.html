@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>SortSafe · Tiny Homes Directory</title>
+    <meta
+      name="description"
+      content="A comprehensive, filterable directory of real tiny homes — filter hundreds of tiny houses by price, square footage, bedrooms, type, builder and more."
+    />
+    <meta name="theme-color" content="#0d0f12" />
+    <meta property="og:title" content="SortSafe · Tiny Homes Directory" />
+    <meta
+      property="og:description"
+      content="Filter hundreds of real tiny homes by price, sqft, beds, baths, length, type and builder."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">◧</span>
+          <div class="brand-text">
+            <strong>SortSafe</strong><span class="brand-sub">Tiny Homes</span>
+          </div>
+        </div>
+        <div class="search-wrap">
+          <input id="search" type="search" placeholder="Search builder, model, location…" autocomplete="off" />
+        </div>
+        <div class="topbar-actions">
+          <label class="sort-wrap">
+            <select id="sort" aria-label="Sort results"></select>
+          </label>
+          <button id="filter-toggle" class="btn-ghost" aria-expanded="false">Filters</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside id="filters" class="filters" aria-label="Filters"></aside>
+        <main class="results">
+          <div class="results-bar">
+            <span id="result-count" class="result-count">Loading…</span>
+            <button id="reset" class="btn-link">Reset all</button>
+          </div>
+          <div id="grid" class="grid"></div>
+          <div id="empty" class="empty" hidden>
+            <p>No tiny homes match these filters.</p>
+            <button id="reset-empty" class="btn">Clear filters</button>
+          </div>
+        </main>
+      </div>
+
+      <footer class="sitefoot">
+        <span id="footer-stats"></span>
+        <span class="foot-note">Real listings aggregated from public sources · No mock data</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
